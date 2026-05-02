@@ -49,4 +49,4 @@ servers/mcp-neo4j-data-modeling/test.ipynb
 servers/mcp-neo4j-data-modeling/src/mcp_neo4j_data_modeling/temp.html
 mcp.json
 
-/mcp-neo4j-unstructured/claude_desktop_config.json
+servers/mcp-neo4j-unstructured/claude_desktop_config.json
