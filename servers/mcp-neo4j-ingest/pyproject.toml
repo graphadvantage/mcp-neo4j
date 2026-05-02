@@ -1,0 +1,29 @@
+[project]
+name = "mcp-neo4j-ingest"
+version = "0.1.0"
+description = "CLI pipeline for ingesting unstructured documents into Neo4j for GraphRAG"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0.0",
+    "neo4j>=5.26.0",
+    "neo4j-graphrag>=1.0.0",
+    "openai>=1.0.0",
+    "unstructured-client>=0.25.0",
+    "Pillow>=10.0.0",
+    "nltk>=3.8.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pyright>=1.1.389",
+    "ruff>=0.11.5",
+]
+
+[project.scripts]
+mcp-neo4j-ingest = "mcp_neo4j_ingest.cli:main"

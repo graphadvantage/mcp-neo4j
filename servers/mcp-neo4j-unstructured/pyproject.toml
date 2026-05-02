@@ -1,0 +1,33 @@
+[project]
+name = "mcp-neo4j-unstructured"
+version = "0.1.0"
+description = "MCP Neo4j Unstructured Document RAG Server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0,<3",
+    "neo4j>=5.26.0",
+    "neo4j-graphrag>=1.0.0",
+    "openai>=1.0.0",
+    "pydantic>=2.10.1",
+    "starlette>=0.28.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pyright>=1.1.389",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.25.3",
+]
+
+[project.scripts]
+mcp-neo4j-unstructured = "mcp_neo4j_unstructured:main"
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
