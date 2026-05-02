@@ -478,12 +478,13 @@ def create_mcp_server(
         ),
     )
     async def get_neo4j_schema(
-        sample_size: int = Field(
-            default=schema_sample_size,
-            description="Sample size for schema inference. Lower is faster; -1 scans the full graph.",
-        ),
+        sample_size: int = schema_sample_size,
     ) -> ToolResult:
-        """Return node labels, property types, and relationships via APOC schema inspection."""
+        """Return node labels, property types, and relationships via APOC schema inspection.
+
+        Args:
+            sample_size: Sample size for schema inference. Lower is faster; -1 scans the full graph.
+        """
         effective = sample_size or schema_sample_size
         logger.info(f"get_neo4j_schema: sample_size={effective}")
         query = f"CALL apoc.meta.schema({{sample: {effective}}}) YIELD value RETURN value"
@@ -574,40 +575,40 @@ def create_mcp_server(
         except Exception as e:
             raise ToolError(f"Error: {e}\n{query}\n{params}")
 
-    @mcp.tool(
-        name=ns + "write_neo4j_cypher",
-        annotations=ToolAnnotations(
-            title="Write Neo4j Cypher",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=True,
-        ),
-        enabled=allow_writes,
-    )
-    async def write_neo4j_cypher(
-        query: str = Field(..., description="The write Cypher query to execute."),
-        params: dict[str, Any] = Field(
-            default_factory=dict, description="Optional query parameters."
-        ),
-    ) -> ToolResult:
-        """Execute a write Cypher query (CREATE, MERGE, SET, DELETE). Disabled when read_only=True."""
-        if not await _is_write_query(query, async_driver, neo4j_database):
-            raise ToolError("Only write queries are allowed here. Use read_neo4j_cypher for reads.")
-        try:
-            _, summary, _ = await async_driver.execute_query(
-                query,
-                parameters_=params,
-                routing_control=RoutingControl.WRITE,
-                database_=neo4j_database,
-            )
-            return ToolResult(
-                content=[TextContent(type="text", text=json.dumps(summary.counters.__dict__, default=str))]
-            )
-        except Neo4jError as e:
-            raise ToolError(f"Neo4j Error: {e}\n{query}\n{params}")
-        except Exception as e:
-            raise ToolError(f"Error: {e}\n{query}\n{params}")
+    if allow_writes:
+        @mcp.tool(
+            name=ns + "write_neo4j_cypher",
+            annotations=ToolAnnotations(
+                title="Write Neo4j Cypher",
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
+        async def write_neo4j_cypher(
+            query: str = Field(..., description="The write Cypher query to execute."),
+            params: dict[str, Any] = Field(
+                default_factory=dict, description="Optional query parameters."
+            ),
+        ) -> ToolResult:
+            """Execute a write Cypher query (CREATE, MERGE, SET, DELETE)."""
+            if not await _is_write_query(query, async_driver, neo4j_database):
+                raise ToolError("Only write queries are allowed here. Use read_neo4j_cypher for reads.")
+            try:
+                _, summary, _ = await async_driver.execute_query(
+                    query,
+                    parameters_=params,
+                    routing_control=RoutingControl.WRITE,
+                    database_=neo4j_database,
+                )
+                return ToolResult(
+                    content=[TextContent(type="text", text=json.dumps(summary.counters.__dict__, default=str))]
+                )
+            except Neo4jError as e:
+                raise ToolError(f"Neo4j Error: {e}\n{query}\n{params}")
+            except Exception as e:
+                raise ToolError(f"Error: {e}\n{query}\n{params}")
 
     return mcp
 

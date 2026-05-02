@@ -16,23 +16,23 @@ SUBGRAPH_QUERIES = """
 MATCH (a:Chunk)-[r:PART_OF_DOCUMENT]->(b:Document)
 WHERE elementId(a) IN $ids
 RETURN DISTINCT
-  elementId(a) AS src_id, labels(a) AS src_labels, properties(a) AS src_props,
+  elementId(startNode(r)) AS src_id, labels(startNode(r)) AS src_labels, properties(startNode(r)) AS src_props,
   type(r) AS rel_type,
-  elementId(b) AS tgt_id, labels(b) AS tgt_labels, properties(b) AS tgt_props
+  elementId(endNode(r)) AS tgt_id, labels(endNode(r)) AS tgt_labels, properties(endNode(r)) AS tgt_props
 UNION ALL
 MATCH (a:Chunk)-[r:NEXT_CHUNK]-(b:Chunk)
 WHERE elementId(a) IN $ids AND elementId(b) IN $ids
 RETURN DISTINCT
-  elementId(a) AS src_id, labels(a) AS src_labels, properties(a) AS src_props,
+  elementId(startNode(r)) AS src_id, labels(startNode(r)) AS src_labels, properties(startNode(r)) AS src_props,
   type(r) AS rel_type,
-  elementId(b) AS tgt_id, labels(b) AS tgt_labels, properties(b) AS tgt_props
+  elementId(endNode(r)) AS tgt_id, labels(endNode(r)) AS tgt_labels, properties(endNode(r)) AS tgt_props
 UNION ALL
 MATCH (a:Chunk)-[r:HAS_ENTITY]-(b:Entity)
 WHERE elementId(a) IN $ids AND elementId(b) IN $ids
 RETURN DISTINCT
-  elementId(a) AS src_id, labels(a) AS src_labels, properties(a) AS src_props,
+  elementId(startNode(r)) AS src_id, labels(startNode(r)) AS src_labels, properties(startNode(r)) AS src_props,
   type(r) AS rel_type,
-  elementId(b) AS tgt_id, labels(b) AS tgt_labels, properties(b) AS tgt_props
+  elementId(endNode(r)) AS tgt_id, labels(endNode(r)) AS tgt_labels, properties(endNode(r)) AS tgt_props
 UNION ALL
 MATCH (a:Chunk)-[r:RELATED_CONTENT]->(b)
 WHERE elementId(a) IN $ids
@@ -40,9 +40,9 @@ WHERE elementId(a) IN $ids
   AND b.aspect_ratio < 10
   AND b.bytes > 9216
 RETURN DISTINCT
-  elementId(a) AS src_id, labels(a) AS src_labels, properties(a) AS src_props,
+  elementId(startNode(r)) AS src_id, labels(startNode(r)) AS src_labels, properties(startNode(r)) AS src_props,
   type(r) AS rel_type,
-  elementId(b) AS tgt_id, labels(b) AS tgt_labels, properties(b) AS tgt_props
+  elementId(endNode(r)) AS tgt_id, labels(endNode(r)) AS tgt_labels, properties(endNode(r)) AS tgt_props
 LIMIT 500
 """
 
@@ -52,7 +52,8 @@ _HTML_TEMPLATE = """\
 <head>
 <meta charset="UTF-8">
 <title>Neo4j Context Graph</title>
-<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script src="https://unpkg.com/three@0.134.0/build/three.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.70.6"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -65,7 +66,7 @@ _HTML_TEMPLATE = """\
   .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #aaa; }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
   .main { display: flex; flex: 1; overflow: hidden; }
-  #graph { flex: 1; background: #0f0f1a; position: relative; }
+  #graph { flex: 1; background: #0f0f1a; position: relative; overflow: hidden; }
   .graph-controls { position: absolute; top: 10px; right: 10px; z-index: 10;
                     display: flex; flex-direction: column; gap: 6px; }
   .graph-controls button { background: #16213e; border: 1px solid #0f3460; color: #a0c4ff;
@@ -118,7 +119,7 @@ _HTML_TEMPLATE = """\
   <div id="graph">
     <div class="graph-controls">
       <button onclick="fitAll()">Fit</button>
-      <button onclick="resetZoom()">Reset</button>
+      <button onclick="resetView()">Reset</button>
     </div>
   </div>
   <div id="panel">
@@ -132,11 +133,11 @@ _HTML_TEMPLATE = """\
 </div>
 <script>
 const NODES_DATA = __NODES_JSON__;
-const EDGES_DATA = __EDGES_JSON__;
+const LINKS_DATA = __EDGES_JSON__;
 const CONTENT_MAP = __CONTENT_JSON__;
 
 document.getElementById('node-count').textContent =
-  NODES_DATA.length + ' nodes · ' + EDGES_DATA.length + ' edges';
+  NODES_DATA.length + ' nodes · ' + LINKS_DATA.length + ' edges';
 
 function esc(s) {
   return String(s == null ? '' : s)
@@ -164,7 +165,7 @@ function renderPanel(nodeId) {
   else if (nodeType === 'Image') {
     const img = props.image_base64 || props.image;
     if (img) {
-      html += '<div class="section-label">image_base64</div>';
+      html += '<div class="section-label">image</div>';
       html += '<img class="node-img" src="data:image/png;base64,' + img + '" alt="image">';
     } else {
       html += '<p style="color:#666;font-size:12px">No image data on this node.</p>';
@@ -199,7 +200,6 @@ function renderPanel(nodeId) {
     }
   }
   else {
-    // Entity or other
     const skip = new Set(['embedding', 'image_base64', 'image', 'text_as_html']);
     const entries = Object.entries(props).filter(([k,v]) => !skip.has(k) && typeof v !== 'object');
     entries.forEach(([k, v]) => {
@@ -210,40 +210,98 @@ function renderPanel(nodeId) {
   body.innerHTML = html;
 }
 
-const nodes = new vis.DataSet(NODES_DATA);
-const edges = new vis.DataSet(EDGES_DATA);
-const container = document.getElementById('graph');
-const network = new vis.Network(container, { nodes, edges }, {
-  physics: {
-    solver: 'forceAtlas2Based',
-    forceAtlas2Based: { gravitationalConstant: -80, springLength: 140, springConstant: 0.05 },
-    stabilization: { iterations: 200, fit: true }
-  },
-  edges: {
-    smooth: { type: 'continuous' },
-    font: { size: 10, color: '#888', strokeWidth: 0 },
-    color: { color: '#2a3a5a', highlight: '#a0c4ff', hover: '#6080a0' },
-    arrows: { to: { enabled: true, scaleFactor: 0.6 } }
-  },
-  nodes: {
-    shape: 'box', borderWidth: 2, shadow: { enabled: true, size: 8, color: 'rgba(0,0,0,0.4)' },
-    font: { size: 11, face: '"Segoe UI", sans-serif' },
-    widthConstraint: { maximum: 200 }
-  },
-  interaction: { hover: true, tooltipDelay: 300, navigationButtons: false },
-  layout: { improvedLayout: true }
-});
+const graphEl = document.getElementById('graph');
 
-network.on('click', function(p) {
-  if (p.nodes.length > 0) renderPanel(p.nodes[0]);
-});
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? line + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [text];
+}
 
-network.on('stabilizationIterationsDone', function() {
-  network.setOptions({ physics: { enabled: false } });
-});
+function makeSprite(label, bgColor, fontColor, fontSize, maxTextWidth, textAlign) {
+  const fs = fontSize || 13;
+  const maxW = maxTextWidth || 140;
+  const align = textAlign || 'center';
+  const pad = 10, lineH = Math.round(fs * 1.4);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = `bold ${fs}px Arial, sans-serif`;
+  const lines = wrapText(ctx, label, maxW);
+  const contentW = Math.min(Math.max(...lines.map(l => ctx.measureText(l).width)), maxW);
+  canvas.width = contentW + pad * 2;
+  canvas.height = lines.length * lineH + pad;
+  ctx.fillStyle = bgColor;
+  const r = 3, w = canvas.width, h = canvas.height;
+  ctx.beginPath();
+  ctx.moveTo(r, 0); ctx.lineTo(w - r, 0);
+  ctx.quadraticCurveTo(w, 0, w, r);
+  ctx.lineTo(w, h - r);
+  ctx.quadraticCurveTo(w, h, w - r, h);
+  ctx.lineTo(r, h); ctx.quadraticCurveTo(0, h, 0, h - r);
+  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = fontColor;
+  ctx.font = `bold ${fs}px Arial, sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  const x = align === 'left' ? pad : w / 2;
+  lines.forEach((ln, i) => {
+    ctx.fillText(ln, x, pad / 2 + lineH * i + lineH / 2);
+  });
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, depthWrite: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(w / 10, h / 10, 1);
+  return sprite;
+}
 
-function fitAll() { network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } }); }
-function resetZoom() { network.moveTo({ scale: 1.0, animation: { duration: 400 } }); }
+const graph = ForceGraph3D()(graphEl)
+  .width(graphEl.clientWidth || 800)
+  .height(graphEl.clientHeight || 600)
+  .backgroundColor('#0f0f1a')
+  .graphData({ nodes: NODES_DATA, links: LINKS_DATA })
+  .nodeThreeObject(node => makeSprite(node.label, node.color, node.fontColor, 13, 140, 'left'))
+  .nodeLabel('')
+  .linkLabel('')
+  .linkThreeObjectExtend(true)
+  .linkThreeObject(link => makeSprite(link.label, '#1e2d4a', '#7090c0', 9))
+  .linkPositionUpdate((sprite, { start, end }) => {
+    sprite.position.set(
+      start.x + (end.x - start.x) / 2,
+      start.y + (end.y - start.y) / 2,
+      start.z + (end.z - start.z) / 2,
+    );
+  })
+  .linkColor(() => '#ffffff')
+  .linkDirectionalArrowLength(4)
+  .linkDirectionalArrowRelPos(1)
+  .linkDirectionalArrowColor(() => '#ffffff')
+  .linkDirectionalParticles(1)
+  .linkDirectionalParticleSpeed(0.005)
+  .linkDirectionalParticleColor(() => '#a0c4ff')
+  .onNodeClick(node => renderPanel(node.id))
+  .onNodeHover(node => { graphEl.style.cursor = node ? 'pointer' : 'default'; });
+
+new ResizeObserver(() => {
+  graph.width(graphEl.clientWidth).height(graphEl.clientHeight);
+}).observe(graphEl);
+
+function fitAll() { graph.zoomToFit(600, 40); }
+function resetView() {
+  graph.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 800);
+}
 </script>
 </body>
 </html>
@@ -308,13 +366,8 @@ def generate_interactive_graph_html(
         vis_nodes.append({
             "id": node_id,
             "label": display,
-            "color": {
-                "background": color["background"],
-                "border": color["border"],
-                "highlight": {"background": color["background"], "border": "#ffffff"},
-                "hover": {"background": color["background"], "border": "#a0c4ff"},
-            },
-            "font": {"color": color["font"]},
+            "color": color["background"],
+            "fontColor": color["font"],
         })
         content_map[node_id] = {"labels": labels, "display": display, "props": props}
 
@@ -326,8 +379,8 @@ def generate_interactive_graph_html(
             continue
         seen_edges.add(key)
         vis_edges.append({
-            "from": e["source"],
-            "to": e["target"],
+            "source": e["source"],
+            "target": e["target"],
             "label": e["type"],
         })
 
